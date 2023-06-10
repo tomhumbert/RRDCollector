@@ -1,5 +1,5 @@
 from praw import Reddit
-import time, os, csv, re, sys
+import time, os, csv, re, sys, math
 from datetime import datetime
 import pandas as pd
 from nltk import ngrams
@@ -51,6 +51,14 @@ class RScraper(Reddit):
                     platforms = p.readlines()
                     platforms = ['"'+b.replace("\n", "")+'"' for b in platforms]
                     query = ' OR '.join(platforms)
+                    if len(platforms)>25:
+                        query = []
+                        qs = math.ceil(len(platforms)/25)
+                        for i in range(qs):
+                            platforms_p = platforms[i*25:i*25+25]
+                            query.append(' OR '.join(platforms_p))
+                        rem = len(platforms)%25
+                        query.append(' OR '.join(platforms[qs*25+25:qs*25+25+rem]))
             elif platform == "" or platform == " ":
                 query = "r/"
             else:
@@ -64,28 +72,52 @@ class RScraper(Reddit):
 
         for subreddit in subreddits:
             print(f"Now accessing {subreddit}")
-            matched_posts = self.subreddit(subreddit).search(query, sort='new', limit=fetchlim)
             npost = 0
-            domain_count = dict()
-            tdomain, tlinks, bdomain, tlinks = False,False,False,False
-            for post in matched_posts:
-                postid = post.id
-                title = post.title
-                title, tdomain, tlinks = self.clean_links(title)
-                body = post.selftext
-                body = body.replace("\n"," <newline> ").replace(";", ":")
-                body, bdomain, blinks = self.clean_links(body)
-                author = post.author
-                nsfw = post.over_18
-                ncomm = post.num_comments
-                uprat = post.upvote_ratio
-                date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
-                link = post.permalink
-                contained_links = tlinks + blinks
-                npost += 1
-                domain_counts = self.dict_add(domain_count,tdomain,bdomain)
-                self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
-            
+            if type(query) == str:
+                matched_posts = self.subreddit(subreddit).search(query, sort='new', limit=fetchlim)
+                domain_count = dict()
+                tdomain, tlinks, bdomain, tlinks = False,False,False,False
+                for post in matched_posts:
+                    postid = post.id
+                    title = post.title
+                    title, tdomain, tlinks = self.clean_links(title)
+                    body = post.selftext
+                    body = body.replace("\n"," <newline> ").replace(";", ":")
+                    body, bdomain, blinks = self.clean_links(body)
+                    author = post.author
+                    nsfw = post.over_18
+                    ncomm = post.num_comments
+                    uprat = post.upvote_ratio
+                    date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
+                    link = post.permalink
+                    contained_links = tlinks + blinks
+                    npost += 1
+                    domain_counts = self.dict_add(domain_count,tdomain,bdomain)
+                    self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
+
+            elif type(query) == list:
+                for q in query:
+                    matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=fetchlim)
+                    domain_count = dict()
+                    tdomain, tlinks, bdomain, tlinks = False,False,False,False
+                    for post in matched_posts:
+                        postid = post.id
+                        title = post.title
+                        title, tdomain, tlinks = self.clean_links(title)
+                        body = post.selftext
+                        body = body.replace("\n"," <newline> ").replace(";", ":")
+                        body, bdomain, blinks = self.clean_links(body)
+                        author = post.author
+                        nsfw = post.over_18
+                        ncomm = post.num_comments
+                        uprat = post.upvote_ratio
+                        date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
+                        link = post.permalink
+                        contained_links = tlinks + blinks
+                        npost += 1
+                        domain_counts = self.dict_add(domain_count,tdomain,bdomain)
+                        self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
+
             self.description.loc[len(self.description)] = [subreddit, npost, 0, domain_count]
         return self.posts
 
@@ -338,27 +370,27 @@ if __name__ == "__main__":
 
     # Input files
     subs = "subredditsV1.txt"
-    plats = "platformsV1.txt"
+    plats = "platformsV2.txt"
 
     # Scraper init
     scraper = RScraper("reddit-credentials.txt")
 
     #Load previous collection
-    #posts, description = scraper.load("subredditsV1_2.csv", "postsV1_2.csv")
-    posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
+    #posts, description = scraper.load("subredditsV2.csv", "postsV2.csv")
+    #posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
 
     # Add windows
-    scraper.add_windows(plats)
-    scraper.posts.to_csv("postsV1_3.csv", sep=";",encoding='utf-8-sig')
+    #scraper.add_windows(plats)
+    #scraper.posts.to_csv("postsV2_1.csv", sep=";",encoding='utf-8-sig')
 
 
 
     # Collect new data
-    #data = scraper.fetch_posts(subs,plats, 1000)
-    #print(data.head())
+    data = scraper.fetch_posts(['parenting', 'eldercare'],"platformsV1.txt", 1000)
+    print(data.head())
     #print(scraper.summary())
-    #input("Save this collection? Else, abort.")
-    #scraper.safe_all_to_csvs()
+    input("Save this collection? Else, abort.")
+    scraper.safe_all_to_csvs()
 
     #input()
 
