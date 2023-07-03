@@ -16,8 +16,9 @@ class RScraper(Reddit):
         """Initialize praw with personal credentials"""
         creds = open(cred_file,'r').read().replace("\n", " ").split()
         super().__init__(client_id= creds[0], client_secret= creds[1], user_agent= creds[2])
-        self.posts = pd.DataFrame(columns=['id', 'title', 'body', 'author', 'is_nsfw', 'n_comments', 'up_ratio', 'date', 'link', 'subreddit', 'contained_links'])
+        self.posts = pd.DataFrame(columns=['post_id', 'title', 'body', 'author', 'is_nsfw', 'n_comments', 'up_ratio', 'date', 'link', 'subreddit', 'contained_links'])
         self.description = pd.DataFrame(columns=['subreddit','n_posts','n_comments','domain_counts'])
+        self.comments = pd.DataFrame(columns=['post_id','comment_id','author','body'])
 
     def fetch_posts(self, sub, platform, fetchlim):
         """Fetch all posts resulting from a query on given platforms and given keywords.
@@ -135,7 +136,7 @@ class RScraper(Reddit):
                 dc[i] = c
         return dc
 
-    def rm_dups(self):
+    def rm_dups_and_bots(self):
         """Removes duplicate posts"""
         return None
 
@@ -143,7 +144,7 @@ class RScraper(Reddit):
         """Removes links from text, returns clean text and list of removed links"""
         ntext = text
         # url regex
-        linkRegex = r"([http:\/\/|ftp:\/\/|https:\/\/]*[www\.]*(?P<dom>[\w_-]+)\.[\w_-]{2,3}[\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])"
+        linkRegex = r"([http:\/\/|ftp:\/\/|https:\/\/]*[www\.]*(?P<dom>[\w_-]+)\.[de|com|net|org|nl|ca|co\.uk|co|ly|le|in|es][\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])"
         # collect all links
         links = re.findall(linkRegex, ntext)
         # replace all reddit style markup links with only text
@@ -208,7 +209,7 @@ class RScraper(Reddit):
         stop_words = open('smart.txt','r').read().replace("\n", " ")
         punct  = r"[.?!,;:\-\\\(\)_']"
         text = re.sub(punct," ", txt)
-        tokens = word_tokenize(text)
+        tokens = word_tokenize(text.lower())
         clean_tokens = [word for word in tokens if not word in stop_words.split()]
         # lemmatize
         lemmat = WordNetLemmatizer()
@@ -217,8 +218,10 @@ class RScraper(Reddit):
         # stemmer (not always desirable)
         #stmmer = PorterStemmer()
         #clean_tokens = [stmmer.stem(w) for w in clean_tokens]
-
-        ntext = (" ").join(clean_tokens)
+        if len(clean_tokens) > 2:
+            ntext = (" ").join(clean_tokens)
+        else:
+            ntext = ""
         return ntext
 
     def freqNgrams(self, sub, lim = 7):
@@ -226,7 +229,7 @@ class RScraper(Reddit):
         c_vec = CountVectorizer(ngram_range=(3,5))
         corpus = self.gen_corpus(sub=sub, stringlist=True)
         corpus = [self.nlp_prep(c) for c in corpus]
-        if len(corpus) > 0:
+        if len(corpus) > 2:
             ngrams = c_vec.fit_transform(corpus)
             vocab = c_vec.vocabulary_
             count_values = ngrams.toarray().sum(axis=0)
@@ -265,14 +268,16 @@ class RScraper(Reddit):
         now = str(now)[:-7].replace(" ", "_").replace(":", "_")
         fname = f"posts_{now}.csv"
         dname = f"subreddits_{now}.csv"
+        cname = f"comments_{now}.csv"
         self.posts.to_csv(fname, sep=";",encoding='utf-8-sig')
         self.description.to_csv(dname, sep=";",encoding='utf-8-sig')
+        self.comments.to_csv(dname, sep=";",encoding='utf-8-sig')
         return None
 
     def load(self, subs, posts):
         # Load previously collected posts
-        self.description = pd.read_csv(subs, delimiter=';', encoding='utf-8-sig', index_col='Unnamed: 0')
-        self.posts = pd.read_csv(posts, sep=';', index_col='Unnamed: 0')
+        self.description = pd.read_csv(subs, delimiter=';', encoding='utf-8-sig')
+        self.posts = pd.read_csv(posts, sep=';', encoding='cp1252')
 
         if not 'n_posts' in list(self.description.columns):
             counted = self.posts.groupby('subreddit')['subreddit'].count()
@@ -329,13 +334,23 @@ class RScraper(Reddit):
                 
         return None
 
-    def fetch_comments_of_post(self, posts):
-        """post.comments.replace_more(limit=None)
-       	    for top_level_comment in post.comments:
-                text = top_level_comment.body
-                print(f"Comment: {text}")
-            print()"""
+    def get_comments(self, post_id):
+        post = self.submission(post_id)
+        post.comments.replace_more(limit=None)
+       	for top_level_comment in post.comments:
+            text = top_level_comment.body
+            author = top_level_comment.author
+            cid = top_level_comment.id
+            if not text == "[deleted]" and cid not in self.comments['comment_id']:
+                self.comments.loc[len(self.comments)] = [post_id, cid, author, text]
         return None
+
+    def get_all_comments(self):
+        for ids in self.posts['post_id'].tolist():
+            print(f"Collecting comments from post with ID {ids}")
+            self.get_comments(ids)
+        return None
+            
 
 
 
@@ -370,27 +385,29 @@ if __name__ == "__main__":
 
     # Input files
     subs = "subredditsV1.txt"
-    plats = "platformsV2.txt"
+    plats = "platformsV3.txt"
 
     # Scraper init
     scraper = RScraper("reddit-credentials.txt")
 
     #Load previous collection
-    #posts, description = scraper.load("subredditsV2.csv", "postsV2.csv")
+    posts, description = scraper.load("current_description.csv", "current_posts.csv")
     #posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
 
     # Add windows
     #scraper.add_windows(plats)
     #scraper.posts.to_csv("postsV2_1.csv", sep=";",encoding='utf-8-sig')
 
-
+    # Collect posts
+    scraper.get_all_comments()
+    scraper.safe_all_to_csvs()
 
     # Collect new data
-    data = scraper.fetch_posts(['parenting', 'eldercare'],"platformsV1.txt", 1000)
-    print(data.head())
+    #data = scraper.fetch_posts(['parenting', 'eldercare'],"platformsV1.txt", 1000)
+    #print(data.head())
     #print(scraper.summary())
-    input("Save this collection? Else, abort.")
-    scraper.safe_all_to_csvs()
+    #input("Save this collection? Else, abort.")
+    #scraper.safe_all_to_csvs()
 
     #input()
 
