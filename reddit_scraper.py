@@ -330,7 +330,7 @@ class RScraper(Reddit):
             text = str(self.posts.iloc[i]['body']).lower() 
             if len(text) > 0:
                 w_text = self.get_window(text, platforms)
-                self.posts.iat[i,11] = w_text
+                self.posts.iat[i,11] = str(w_text)
                 
         return None
 
@@ -391,11 +391,11 @@ if __name__ == "__main__":
     scraper = RScraper("reddit-credentials.txt")
 
     #Load previous collection
-    posts, description = scraper.load("current_description.csv", "current_posts.csv")
+    posts, description = scraper.load("classified_description.csv", "classified_posts.csv")
     #posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
 
     # Add windows
-    #scraper.add_windows(plats)
+    scraper.add_windows(plats)
     #scraper.posts.to_csv("postsV2_1.csv", sep=";",encoding='utf-8-sig')
 
     # Collect posts
