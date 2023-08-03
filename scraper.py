@@ -20,6 +20,25 @@ class RScraper(Reddit):
         self.description = pd.DataFrame(columns=['subreddit','n_posts','n_comments','domain_counts'])
         self.comments = pd.DataFrame(columns=['post_id','comment_id','author','body'])
 
+    def data_extraction(self, post,sub, domain_count):
+        subreddit = sub
+        postid = post.id
+        title = post.title
+        title, tdomain, tlinks = self.clean_links(title)
+        body = post.selftext
+        body = body.replace(";", ":")
+        body, bdomain, blinks = self.clean_links(body)
+        author = post.author
+        nsfw = post.over_18
+        ncomm = post.num_comments
+        uprat = post.upvote_ratio
+        date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
+        link = post.permalink
+        contained_links = tlinks + blinks
+        domain_count = self.dict_add(domain_count,tdomain,bdomain)
+        data = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
+        return data, domain_count
+
     def fetch_posts(self, sub, platform, fetchlim):
         """Fetch all posts resulting from a query on given platforms and given keywords.
         Takes parameters;  
@@ -48,11 +67,13 @@ class RScraper(Reddit):
 
         if type(platform) == str:
             if platform in os.listdir(os.path.curdir):
+                print("Reading list of software platforms from file.")
                 with open(platform, 'r') as p:
                     platforms = p.readlines()
                     platforms = ['"'+b.replace("\n", "")+'"' for b in platforms]
                     query = ' OR '.join(platforms)
                     if len(platforms)>25:
+                        print("There are more than 25 software platforms. They are split into groups of 25.")
                         query = []
                         qs = math.ceil(len(platforms)/25)
                         for i in range(qs):
@@ -60,11 +81,15 @@ class RScraper(Reddit):
                             query.append(' OR '.join(platforms_p))
                         rem = len(platforms)%25
                         query.append(' OR '.join(platforms[qs*25+25:qs*25+25+rem]))
+                        print(f"There are now {len(query)} queries to execute per subreddit.")
             elif platform == "" or platform == " ":
+                #This was some kind of test
                 query = "r/"
             else:
+                print(f"Looking for one software platform: {platform}")
                 query = platform
         elif type(platform) == list:
+            print(f"A list of {len(platform)} software platforms has been given.")
             platforms = ['"'+b+'"' for b in platform]
             query = ' OR '.join(platforms)
         else:
@@ -72,56 +97,32 @@ class RScraper(Reddit):
             return False
 
         for subreddit in subreddits:
-            print(f"Now accessing {subreddit}")
+            print(f"Now accessing r/{subreddit}")
             npost = 0
+            domain_count = dict()
             if type(query) == str:
+                print(f"Executing the query:\n{query}")
                 matched_posts = self.subreddit(subreddit).search(query, sort='new', limit=fetchlim)
-                domain_count = dict()
-                tdomain, tlinks, bdomain, tlinks = False,False,False,False
                 for post in matched_posts:
-                    postid = post.id
-                    title = post.title
-                    title, tdomain, tlinks = self.clean_links(title)
-                    body = post.selftext
-                    body = body.replace("\n"," <newline> ").replace(";", ":")
-                    body, bdomain, blinks = self.clean_links(body)
-                    author = post.author
-                    nsfw = post.over_18
-                    ncomm = post.num_comments
-                    uprat = post.upvote_ratio
-                    date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
-                    link = post.permalink
-                    contained_links = tlinks + blinks
                     npost += 1
-                    domain_counts = self.dict_add(domain_count,tdomain,bdomain)
-                    self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
-
+                    data, domain_count = self.data_extraction(post, subreddit, domain_count)
+                    self.posts.loc[len(self.posts)] = data
 
             elif type(query) == list:
                 for q in query:
+                    print(f"Executing the query:\n{q}")
                     matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=fetchlim)
-                    domain_count = dict()
-                    tdomain, tlinks, bdomain, tlinks = False,False,False,False
                     for post in matched_posts:
-                        postid = post.id
-                        title = post.title
-                        title, tdomain, tlinks = self.clean_links(title)
-                        body = post.selftext
-                        body = body.replace("\n"," <newline> ").replace(";", ":")
-                        body, bdomain, blinks = self.clean_links(body)
-                        author = post.author
-                        nsfw = post.over_18
-                        ncomm = post.num_comments
-                        uprat = post.upvote_ratio
-                        date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
-                        link = post.permalink
-                        contained_links = tlinks + blinks
                         npost += 1
-                        domain_counts = self.dict_add(domain_count,tdomain,bdomain)
-                        self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
+                        data, domain_count = self.data_extraction(post, subreddit, domain_count)
+                        self.posts.loc[len(self.posts)] = data
+            else:
+                print("There is no logic implemented for this input.")
 
             self.description.loc[len(self.description)] = [subreddit, npost, 0, domain_count]
-            print(f"Collected {npost} posts.\n")
+            print(f"Found {npost} posts.\n")
+            dslen = len(self.posts)
+            print(f"The dataset now contains {dslen} posts.\n\n")
         return self.posts
 
     def dict_add(self,dc,dict1,dict2):
@@ -152,7 +153,7 @@ class RScraper(Reddit):
         # replace all reddit style markup links with only text
         ntext = re.sub(r"(\[(?P<txt>[\s]*[\S]*)\]\([\s]*[\S]*\))", "\g<txt>", ntext)
         # replace all remaining links with main part of address
-        ntext = re.sub(linkRegex, "LinkTO\g<dom>", ntext)
+        ntext = re.sub(linkRegex, "\g<dom>LINK", ntext)
 
         ####debugging
         #print(ntext)
