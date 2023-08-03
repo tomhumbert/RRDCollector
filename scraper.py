@@ -96,6 +96,7 @@ class RScraper(Reddit):
                     domain_counts = self.dict_add(domain_count,tdomain,bdomain)
                     self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
 
+
             elif type(query) == list:
                 for q in query:
                     matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=fetchlim)
@@ -120,6 +121,7 @@ class RScraper(Reddit):
                         self.posts.loc[len(self.posts)] = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
 
             self.description.loc[len(self.description)] = [subreddit, npost, 0, domain_count]
+            print(f"Collected {npost} posts.\n")
         return self.posts
 
     def dict_add(self,dc,dict1,dict2):
@@ -271,7 +273,7 @@ class RScraper(Reddit):
         cname = f"comments_{now}.csv"
         self.posts.to_csv(fname, sep=";",encoding='utf-8-sig')
         self.description.to_csv(dname, sep=";",encoding='utf-8-sig')
-        self.comments.to_csv(dname, sep=";",encoding='utf-8-sig')
+        self.comments.to_csv(cname, sep=";",encoding='utf-8-sig')
         return None
 
     def load(self, subs, posts):
@@ -391,23 +393,23 @@ if __name__ == "__main__":
     scraper = RScraper("reddit-credentials.txt")
 
     #Load previous collection
-    posts, description = scraper.load("classified_description.csv", "classified_posts.csv")
+    #posts, description = scraper.load("classified_description.csv", "classified_posts.csv")
     #posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
 
     # Add windows
-    scraper.add_windows(plats)
+    #scraper.add_windows(plats)
     #scraper.posts.to_csv("postsV2_1.csv", sep=";",encoding='utf-8-sig')
 
     # Collect posts
-    scraper.get_all_comments()
-    scraper.safe_all_to_csvs()
+    #scraper.get_all_comments()
+    #scraper.safe_all_to_csvs()
 
     # Collect new data
-    #data = scraper.fetch_posts(['parenting', 'eldercare'],"platformsV1.txt", 1000)
-    #print(data.head())
-    #print(scraper.summary())
-    #input("Save this collection? Else, abort.")
-    #scraper.safe_all_to_csvs()
+    data = scraper.fetch_posts(subs,plats, 1000)
+    print(data.head())
+    print(scraper.summary())
+    input("Save this collection? Else, abort.")
+    scraper.safe_all_to_csvs()
 
     #input()
 

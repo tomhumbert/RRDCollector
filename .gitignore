@@ -6,3 +6,4 @@ subreddits*.csv
 posts*.csv
 reddit_bot_access*
 current*
+data/*
