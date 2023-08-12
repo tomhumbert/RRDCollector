@@ -65,6 +65,7 @@ class RScraper(Reddit):
             print("The input given for sub is not in the right format, please check the documentation of this function.")
             return False
 
+        # The type of the search keywords is string, thus a single word to search for or the path to a file with multiple keywords
         if type(platform) == str:
             if platform in os.listdir(os.path.curdir):
                 print("Reading list of software platforms from file.")
@@ -88,6 +89,7 @@ class RScraper(Reddit):
             else:
                 print(f"Looking for one software platform: {platform}")
                 query = platform
+        # The type of the search keywords is a list
         elif type(platform) == list:
             print(f"A list of {len(platform)} software platforms has been given.")
             platforms = ['"'+b+'"' for b in platform]
