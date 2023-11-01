@@ -13,14 +13,163 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 class RScraper(Reddit):
     def __init__(self, cred_file):
-        """Initialize praw with personal credentials"""
+        """Initialize praw with personal credentials and create empty datasets"""
         creds = open(cred_file,'r').read().replace("\n", " ").split()
         super().__init__(client_id= creds[0], client_secret= creds[1], user_agent= creds[2])
-        self.posts = pd.DataFrame(columns=['post_id', 'title', 'body', 'author', 'is_nsfw', 'n_comments', 'up_ratio', 'date', 'link', 'subreddit', 'contained_links'])
-        self.description = pd.DataFrame(columns=['subreddit','n_posts','n_comments','domain_counts'])
-        self.comments = pd.DataFrame(columns=['post_id','comment_id','author','body'])
 
-    def data_extraction(self, post,sub, domain_count):
+        self.posts = pd.DataFrame(columns=['subreddit', 'post_id', 'link', 'date', 'author', 'title', 'body', 'n_comments', 'up_ratio', 'distinguished', 'is_nsfw', 'external_links'])
+        self.comments = pd.DataFrame(columns=['post_id','comment_id','author','body'])
+        self.description = pd.DataFrame(columns=['subreddit','n_posts','n_comments','external_links'])
+
+    def load(self, subs, posts):
+        # Load previously collected posts
+        self.description = pd.read_csv(subs, delimiter=';', encoding='utf-8-sig')
+        self.posts = pd.read_csv(posts, sep=';', encoding='cp1252')
+
+        if not 'n_posts' in list(self.description.columns):
+            counted = self.posts.groupby('subreddit')['subreddit'].count()
+            subredds = list(counted.index)
+            counts = list(counted)
+            counted = pd.DataFrame({'subreddit':subredds, 'n_posts':counts}, index=None)
+            self.description = pd.merge(self.description,counted,how='left',on='subreddit').fillna(0)
+            self.description['n_comments'] = 0
+            self.description.to_csv(subs, sep=';', encoding='utf-8-sig')
+
+        if not 'ngrams' in list(self.description.columns) and not 'sub_mention' in list(self.description.columns):
+            mentions = []
+            ngrams = []
+            for sub in list(self.description['subreddit']):
+                mentions.append(self.sub_mentions(sub))
+                ngrams.append(self.freqNgrams(sub))
+                print(f"{sub}.. done computing mentions and ngrams")
+            self.description['sub_mentions'] = mentions
+            self.description['ngrams'] = ngrams
+            self.description.to_csv(subs, sep=';', encoding='utf-8-sig')
+
+        return self.posts, self.description
+
+    def summary(self):
+        if not 'all' in list(self.description['subreddit']):
+            total = self.description['n_posts'].sum()
+            self.description.loc[len(self.description)] = ['all', total, 0]
+        return self.description
+
+    def get_all(self, sub, keywords, lim):
+        """
+        Fetch all posts and comments
+        """
+        return None
+
+    def get_posts(self, sub, keywords, lim):
+        """Fetch all posts resulting from a query on given keywords.
+        Takes parameters;  
+        sub (either a single <string> name of a subreddit, a <list> of strings of subreddit names or a name of a text file containing subreddit names) and
+        keywords (single <string>, <list> of strings or a name of a file, containing keywords)
+        Returns pandas dataframe of all results."""
+        subreddits = False
+        query = False
+
+        ## PREPARE TARGET SUBREDDIT(S)
+        # subreddit parameter is a string:
+        if type(sub) == str:
+            # The string is a path
+            if sub in os.listdir(os.path.curdir):
+                with open(sub, 'r') as s:
+                    subreddits = s.readlines()
+                    subreddits = [z.replace("\n", "") for z in subreddits]
+
+            # The string is a subreddit name
+            else:
+                subreddits = [sub]
+
+        # The subreddit parameter is a list of strings.
+        elif type(sub) == list:
+            subreddits = sub
+        else:
+            print("The input given for sub is not in the right format, please check the documentation of this function.")
+            return False
+
+        ## BUILDING THE QUERY
+        # The type of the search keywords is string, thus a single word to search for or the path to a file with multiple keywords.
+        if type(keywords) == str:
+            if keywords in os.listdir(os.path.curdir):
+                print("Reading list of keywords from file.")
+                with open(keywords, 'r') as p:
+                    words = p.readlines()
+                    words = ['"'+b.replace("\n", "")+'"' for b in words]
+                    query = ' OR '.join(words)
+                    query = [query]
+
+                    ## PRAW sullies its pants if you give too long queries, its something around 30, 25 to be safe.
+                    if len(words)>25:
+                        print(f"There are more than 25 words. They are split into {pd.ceil(len(words)/25)} groups of 25.")
+                        query = []
+                        qs = math.ceil(len(words)/25)
+                        for i in range(qs):
+                            words_p = words[i*25:i*25+25]
+                            query.append(' OR '.join(words_p))
+                        rem = len(words)%25
+                        query.append(' OR '.join(words[qs*25+25:qs*25+25+rem]))
+
+            # Empty query.
+            elif keywords == "" or keywords == " ":
+                query = ['']
+            
+            # Query consists of single keyword.
+            else:
+                print(f"Looking for one keyword: {keywords}")
+                query = [keywords]
+
+        # The type of the search keywords is a list
+        elif type(keywords) == list:
+            print(f"A list of {len(keywords)} keywords has been given.")
+            words = ['"'+b+'"' for b in keywords]
+            query = ' OR '.join(words)
+            query = [query]
+        else:
+            print("The keyword list is not in the right format, please check the documentation of this function.")
+            return False
+
+        ## START POST EXTRACTION
+        for subreddit in subreddits:
+            print(f"Now accessing r/{subreddit}")
+            npost = 0
+            ext_links = dict()
+
+            # Run 1+ queries
+            for q in query:
+                print(f"Executing the query:\n{q}")
+                matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=lim)
+                for post in matched_posts:
+                    npost += 1
+                    data, ext_links = self.data_extraction(post, subreddit, ext_links)
+                    self.posts.loc[len(self.posts)] = data
+
+            # Add information about subreddits in description file.
+            self.description.loc[len(self.description)] = [subreddit, npost, 0, ext_links]
+            print(f"Found {npost} posts.\n")
+            dslen = len(self.posts)
+            print(f"The dataset now contains {dslen} posts.\n\n")
+        return self.posts
+
+    def get_all_comments(self):
+        for ids in self.posts['post_id'].tolist():
+            print(f"Collecting comments from post with ID {ids}")
+            self.get_comments(ids)
+        return None
+
+    def get_comments(self, post_id):
+        post = self.submission(post_id)
+        post.comments.replace_more(limit=None)
+       	for top_level_comment in post.comments:
+            text = top_level_comment.body
+            author = top_level_comment.author
+            cid = top_level_comment.id
+            if not text == "[deleted]" and cid not in self.comments['comment_id']:
+                self.comments.loc[len(self.comments)] = [post_id, cid, author, text]
+        return None
+
+    def data_extraction(self, post,sub, ext_links):
         subreddit = sub
         postid = post.id
         title = post.title
@@ -34,112 +183,10 @@ class RScraper(Reddit):
         uprat = post.upvote_ratio
         date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
         link = post.permalink
-        contained_links = tlinks + blinks
-        domain_count = self.dict_add(domain_count,tdomain,bdomain)
-        data = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, contained_links]
-        return data, domain_count
-
-    def fetch_posts(self, sub, platform, fetchlim):
-        """Fetch all posts resulting from a query on given platforms and given keywords.
-        Takes parameters;  
-        sub (either a single <string> name of a subreddit, a <list> of strings of subreddit names or a name of a text file containing subreddit names) and
-        platform (single <string>, <list> of strings or a name of a file, containing names of platforms)
-        Returns pandas dataframe of all results."""
-        subreddits = False
-        query = False
-
-        # param of subreddits is a string
-        if type(sub) == str:
-            # The string is a path
-            if sub in os.listdir(os.path.curdir):
-                with open(sub, 'r') as s:
-                    subreddits = s.readlines()
-                    subreddits = [z.replace("\n", "") for z in subreddits]
-            # The string is a subreddit name
-            else:
-                subreddits = [sub]
-        # The param is a list of strings
-        elif type(sub) == list:
-            subreddits = sub
-        else:
-            print("The input given for sub is not in the right format, please check the documentation of this function.")
-            return False
-
-        # The type of the search keywords is string, thus a single word to search for or the path to a file with multiple keywords
-        if type(platform) == str:
-            if platform in os.listdir(os.path.curdir):
-                print("Reading list of software platforms from file.")
-                with open(platform, 'r') as p:
-                    platforms = p.readlines()
-                    platforms = ['"'+b.replace("\n", "")+'"' for b in platforms]
-                    query = ' OR '.join(platforms)
-                    if len(platforms)>25:
-                        print("There are more than 25 software platforms. They are split into groups of 25.")
-                        query = []
-                        qs = math.ceil(len(platforms)/25)
-                        for i in range(qs):
-                            platforms_p = platforms[i*25:i*25+25]
-                            query.append(' OR '.join(platforms_p))
-                        rem = len(platforms)%25
-                        query.append(' OR '.join(platforms[qs*25+25:qs*25+25+rem]))
-                        print(f"There are now {len(query)} queries to execute per subreddit.")
-            elif platform == "" or platform == " ":
-                #This was some kind of test
-                query = "r/"
-            else:
-                print(f"Looking for one software platform: {platform}")
-                query = platform
-        # The type of the search keywords is a list
-        elif type(platform) == list:
-            print(f"A list of {len(platform)} software platforms has been given.")
-            platforms = ['"'+b+'"' for b in platform]
-            query = ' OR '.join(platforms)
-        else:
-            print("The input given for platform is not in the right format, please check the documentation of this function.")
-            return False
-
-        for subreddit in subreddits:
-            print(f"Now accessing r/{subreddit}")
-            npost = 0
-            domain_count = dict()
-            if type(query) == str:
-                print(f"Executing the query:\n{query}")
-                matched_posts = self.subreddit(subreddit).search(query, sort='new', limit=fetchlim)
-                for post in matched_posts:
-                    npost += 1
-                    data, domain_count = self.data_extraction(post, subreddit, domain_count)
-                    self.posts.loc[len(self.posts)] = data
-
-            elif type(query) == list:
-                for q in query:
-                    print(f"Executing the query:\n{q}")
-                    matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=fetchlim)
-                    for post in matched_posts:
-                        npost += 1
-                        data, domain_count = self.data_extraction(post, subreddit, domain_count)
-                        self.posts.loc[len(self.posts)] = data
-            else:
-                print("There is no logic implemented for this input.")
-
-            self.description.loc[len(self.description)] = [subreddit, npost, 0, domain_count]
-            print(f"Found {npost} posts.\n")
-            dslen = len(self.posts)
-            print(f"The dataset now contains {dslen} posts.\n\n")
-        return self.posts
-
-    def dict_add(self,dc,dict1,dict2):
-        dc=dc
-        for i,c in dict1.items():
-            if i in dc.keys():
-                dc[i] = dc[i]+c
-            else:
-                dc[i] = c
-        for i,c in dict2.items():
-            if i in dc.keys():
-                dc[i] = dc[i]+c
-            else:
-                dc[i] = c
-        return dc
+        external_links = tlinks + blinks
+        ext_links = self.dict_add(ext_links,tdomain,bdomain)
+        data = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, external_links]
+        return data, ext_links
 
     def rm_dups_and_bots(self):
         """Removes duplicate posts"""
@@ -261,13 +308,21 @@ class RScraper(Reddit):
 
         return mentioned_subs
 
-    def summary(self):
-        if not 'all' in list(self.description['subreddit']):
-            total = self.description['n_posts'].sum()
-            self.description.loc[len(self.description)] = ['all', total, 0]
-        return self.description
+    def dict_add(self,dc,dict1,dict2):
+        dc=dc
+        for i,c in dict1.items():
+            if i in dc.keys():
+                dc[i] = dc[i]+c
+            else:
+                dc[i] = c
+        for i,c in dict2.items():
+            if i in dc.keys():
+                dc[i] = dc[i]+c
+            else:
+                dc[i] = c
+        return dc
 
-    def safe_all_to_csvs(self):
+    def safe_all_to_csv(self):
         # Save pandas dataframes to file
         now = datetime.now()
         now = str(now)[:-7].replace(" ", "_").replace(":", "_")
@@ -279,36 +334,9 @@ class RScraper(Reddit):
         self.comments.to_csv(cname, sep=";",encoding='utf-8-sig')
         return None
 
-    def load(self, subs, posts):
-        # Load previously collected posts
-        self.description = pd.read_csv(subs, delimiter=';', encoding='utf-8-sig')
-        self.posts = pd.read_csv(posts, sep=';', encoding='cp1252')
-
-        if not 'n_posts' in list(self.description.columns):
-            counted = self.posts.groupby('subreddit')['subreddit'].count()
-            subredds = list(counted.index)
-            counts = list(counted)
-            counted = pd.DataFrame({'subreddit':subredds, 'n_posts':counts}, index=None)
-            self.description = pd.merge(self.description,counted,how='left',on='subreddit').fillna(0)
-            self.description['n_comments'] = 0
-            self.description.to_csv(subs, sep=';', encoding='utf-8-sig')
-
-        if not 'ngrams' in list(self.description.columns) and not 'sub_mention' in list(self.description.columns):
-            mentions = []
-            ngrams = []
-            for sub in list(self.description['subreddit']):
-                mentions.append(self.sub_mentions(sub))
-                ngrams.append(self.freqNgrams(sub))
-                print(f"{sub}.. done computing mentions and ngrams")
-            self.description['sub_mentions'] = mentions
-            self.description['ngrams'] = ngrams
-            self.description.to_csv(subs, sep=';', encoding='utf-8-sig')
-
-        return self.posts, self.description
-
-    def get_window(self,text, platformlist):
+    def windower(self,text, keywords):
         windows = []
-        for p in platformlist:
+        for p in keywords:
             splittext = text.split(p)
             if len(splittext) > 1:
                 w1,w2="",""
@@ -326,35 +354,20 @@ class RScraper(Reddit):
                         w1 = " ".join(splittext[i].split()[-6:])
         return windows
 
-    def add_windows(self, platformlist):
-        platforms = []
+    def add_windows(self, keywords):
+        words = []
         self.posts['window'] = pd.NA
-        with open(platformlist, 'r') as p:
-            platforms = p.read().replace("\n", " ").split()
+        with open(keywords, 'r') as p:
+            words = p.read().replace("\n", " ").split()
         for i in range(len(self.posts)):
             text = str(self.posts.iloc[i]['body']).lower() 
             if len(text) > 0:
-                w_text = self.get_window(text, platforms)
+                w_text = self.windower(text, words)
                 self.posts.iat[i,11] = str(w_text)
                 
         return None
 
-    def get_comments(self, post_id):
-        post = self.submission(post_id)
-        post.comments.replace_more(limit=None)
-       	for top_level_comment in post.comments:
-            text = top_level_comment.body
-            author = top_level_comment.author
-            cid = top_level_comment.id
-            if not text == "[deleted]" and cid not in self.comments['comment_id']:
-                self.comments.loc[len(self.comments)] = [post_id, cid, author, text]
-        return None
 
-    def get_all_comments(self):
-        for ids in self.posts['post_id'].tolist():
-            print(f"Collecting comments from post with ID {ids}")
-            self.get_comments(ids)
-        return None
             
 
 
@@ -389,8 +402,8 @@ if __name__ == "__main__":
     pd.set_option('display.max_rows', None)
 
     # Input files
-    subs = "subredditsV1.txt"
-    plats = "platformsV3.txt"
+    subs = "subreddits.txt"
+    words = "keywords.txt"
 
     # Scraper init
     scraper = RScraper("reddit-credentials.txt")
@@ -400,7 +413,7 @@ if __name__ == "__main__":
     #posts, description = scraper.load("subreddits_vu.csv", "posts_vu.csv")
 
     # Add windows
-    #scraper.add_windows(plats)
+    #scraper.add_windows(words)
     #scraper.posts.to_csv("postsV2_1.csv", sep=";",encoding='utf-8-sig')
 
     # Collect posts
@@ -408,7 +421,7 @@ if __name__ == "__main__":
     #scraper.safe_all_to_csvs()
 
     # Collect new data
-    data = scraper.fetch_posts(subs,plats, 1000)
+    data = scraper.get_posts(subs,words, 1000)
     print(data.head())
     print(scraper.summary())
     input("Save this collection? Else, abort.")
