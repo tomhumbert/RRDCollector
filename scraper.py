@@ -10,6 +10,18 @@ from nltk.stem import WordNetLemmatizer
 from collections import Counter
 from sklearn.feature_extraction.text import CountVectorizer
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
 
 class RScraper(Reddit):
     def __init__(self, cred_file):
@@ -51,7 +63,7 @@ class RScraper(Reddit):
     def summary(self):
         if not 'all' in list(self.description['subreddit']):
             total = self.description['n_posts'].sum()
-            self.description.loc[len(self.description)] = ['all', total, 0]
+            self.description.loc[len(self.description)] = ['all', total, 0, ""]
         return self.description
 
     def get_all(self, sub, keywords, lim):
@@ -60,37 +72,32 @@ class RScraper(Reddit):
         """
         return None
 
-    def get_posts(self, sub, keywords, lim):
-        """Fetch all posts resulting from a query on given keywords.
-        Takes parameters;  
-        sub (either a single <string> name of a subreddit, a <list> of strings of subreddit names or a name of a text file containing subreddit names) and
-        keywords (single <string>, <list> of strings or a name of a file, containing keywords)
-        Returns pandas dataframe of all results."""
-        subreddits = False
+    def prep_search(self, subs, keywords):
+        ## BUILDING THE QUERY
+        # The type of the search keywords is string, thus a single word to search for or the path to a file with multiple keywords.
         query = False
+        subreddits = False
 
         ## PREPARE TARGET SUBREDDIT(S)
         # subreddit parameter is a string:
-        if type(sub) == str:
+        if type(subs) == str:
             # The string is a path
-            if sub in os.listdir(os.path.curdir):
-                with open(sub, 'r') as s:
+            if subs in os.listdir(os.path.curdir):
+                with open(subs, 'r') as s:
                     subreddits = s.readlines()
                     subreddits = [z.replace("\n", "") for z in subreddits]
 
             # The string is a subreddit name
             else:
-                subreddits = [sub]
+                subreddits = [subs]
 
         # The subreddit parameter is a list of strings.
-        elif type(sub) == list:
-            subreddits = sub
+        elif type(subs) == list:
+            subreddits = subs
         else:
-            print("The input given for sub is not in the right format, please check the documentation of this function.")
-            return False
+            print("The input given for subs is not in the right format, please check the documentation of this function.")
+            
 
-        ## BUILDING THE QUERY
-        # The type of the search keywords is string, thus a single word to search for or the path to a file with multiple keywords.
         if type(keywords) == str:
             if keywords in os.listdir(os.path.curdir):
                 print("Reading list of keywords from file.")
@@ -128,28 +135,109 @@ class RScraper(Reddit):
             query = [query]
         else:
             print("The keyword list is not in the right format, please check the documentation of this function.")
-            return False
+        
+        return subreddits, query
 
-        ## START POST EXTRACTION
+    def get_posts(self, subs, mode='top', keywords="", lim=1000):
+        """Fetch all posts resulting from a query on given keywords.
+        Takes parameters;  
+        sub (either a single <string> name of a subreddit, a <list> of strings of subreddit names or a name of a text file containing subreddit names) and
+        keywords (single <string>, <list> of strings or a name of a file, containing keywords)
+        Returns pandas dataframe of all results."""
+        subreddits, query = self.prep_search(subs, keywords)
+        nsub = 0
+
         for subreddit in subreddits:
-            print(f"Now accessing r/{subreddit}")
+            nsub += 1
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print(bcolors.HEADER + f"Sub N.{nsub} - accessing r/{subreddit}" + bcolors.ENDC)
+            print("====================================\n")
             npost = 0
             ext_links = dict()
 
-            # Run 1+ queries
-            for q in query:
-                print(f"Executing the query:\n{q}")
-                matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=lim)
-                for post in matched_posts:
-                    npost += 1
-                    data, ext_links = self.data_extraction(post, subreddit, ext_links)
-                    self.posts.loc[len(self.posts)] = data
+            if mode == 'search':
+                for q in query:
+                    print(bcolors.OKBLUE+f"Executing the query:\n{q}"+ bcolors.ENDC)
+                    try:
+                        matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=lim)
+                    except RedditAPIException as e:
+                        Print(bcolors.WARNING+f"Encountered an error. It reads: {e}, The program will now sleep for 5 min, then try again. All progress is saved"+ bcolors.ENDC)
+                        self.safe_all_to_csv()
+                        time.sleep(300)
+                        matched_posts = self.subreddit(subreddit).search(q, sort='new', limit=lim)
+                    finally:
+                        for post in matched_posts:
+                            data, ext_links = self.data_extraction(post, subreddit, ext_links)
+                            self.posts.loc[len(self.posts)] = data
+                            npost += 1
+
+            if mode == 'top':
+                print("Fetching the top posts of the past year.")
+                try:
+                    matched_posts = self.subreddit(subreddit).top(time_filter="year", limit=None)
+                    for post in matched_posts:
+                        data, ext_links = self.data_extraction(post, subreddit, ext_links)
+                        self.posts.loc[len(self.posts)] = data
+                        npost += 1
+                except:
+                    print("THERE IS A PROBLEM WITH THIS SUB. Check the spelling.")
+            
+            if(nsub % 500 == 0):
+                print(bcolors.BOLD+"Reached 500 Subreddits mile stone. Auto-save collection. Waiting 5 minutes to appease server."+ bcolors.ENDC)
+                self.safe_all_to_csv()
+                time.sleep(60)
+                print(bcolors.OKGREEN+"X" +bcolors.FAIL+ "XXXX")
+                time.sleep(60)
+                print(bcolors.OKGREEN+"XX" +bcolors.FAIL+ "XXX")
+                time.sleep(60)
+                print(bcolors.OKGREEN+"XXX" +bcolors.FAIL+ "XX")
+                time.sleep(60)
+                print(bcolors.OKGREEN+"XXXX" +bcolors.FAIL+ "X")
+                time.sleep(60)
+                print(bcolors.OKGREEN+"XXXXX" +bcolors.ENDC)
+                time.sleep(2)
 
             # Add information about subreddits in description file.
             self.description.loc[len(self.description)] = [subreddit, npost, 0, ext_links]
             print(f"Found {npost} posts.\n")
             dslen = len(self.posts)
             print(f"The dataset now contains {dslen} posts.\n\n")
+            time.sleep(1)
+            print(bcolors.BOLD+".",end="", flush=True)
+            time.sleep(1)
+            print(".",end="", flush=True)
+            time.sleep(1)
+            print("."+bcolors.ENDC)
+        return self.posts
+
+#subreddit','n_posts','n_comments','external_links'
+
+    def get_authors_posts(self, authors):
+        """
+        Authors must be a list type. Returns the maximum of recent posts for each author.
+        """
+        for author in authors:
+            print("========================================================")
+            print(f"Fetching all recent posts for {author}")
+            npost = 0
+            ext_links = dict()
+
+            try:
+                matched_posts = self.redditor(author).submissions.new(limit=1000)
+                for post in matched_posts:
+                    subreddit = post.subreddit.display_name
+                    data, ext_links = self.data_extraction(post, subreddit, ext_links)
+                    self.posts.loc[len(self.posts)] = data
+                    npost += 1
+            except:
+                print("THERE IS A PROBLEM WITH THIS AUTHOR. Account likely suspended.")
+
+            # Add information about subreddits in description file.
+            self.description.loc[len(self.description)] = [author, npost, 0, ext_links]
+            print(f"Found {npost} posts.\n")
+            dslen = len(self.posts)
+            print(f"The dataset now contains {dslen} posts.\n\n")
+
         return self.posts
 
     def get_all_comments(self):
@@ -181,11 +269,12 @@ class RScraper(Reddit):
         nsfw = post.over_18
         ncomm = post.num_comments
         uprat = post.upvote_ratio
+        dist = post.distinguished
         date = datetime.utcfromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
         link = post.permalink
         external_links = tlinks + blinks
         ext_links = self.dict_add(ext_links,tdomain,bdomain)
-        data = [postid, title, body, author, nsfw, ncomm, uprat, date, link, subreddit, external_links]
+        data = [subreddit, postid, link, date, author, title, body, ncomm, uprat, dist, nsfw, external_links]
         return data, ext_links
 
     def rm_dups_and_bots(self):
@@ -196,13 +285,13 @@ class RScraper(Reddit):
         """Removes links from text, returns clean text and list of removed links"""
         ntext = text
         # url regex
-        linkRegex = r"([http:\/\/|ftp:\/\/|https:\/\/]*[www\.]*(?P<dom>[\w_-]+)\.[de|com|net|org|nl|ca|co\.uk|co|ly|le|in|es][\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])"
+        linkRegex = r"([http:\/\/|ftp:\/\/|https:\/\/]*[www\.]*(?P<dom>[\w_-]+)\.[de|com|net|org|nl|ca|co\.uk|co|ly|le|in|es][\w?=%&/#]*[\w@?^=%&\/~+#-])"
         # collect all links
         links = re.findall(linkRegex, ntext)
         # replace all reddit style markup links with only text
         ntext = re.sub(r"(\[(?P<txt>[\s]*[\S]*)\]\([\s]*[\S]*\))", "\g<txt>", ntext)
         # replace all remaining links with main part of address
-        ntext = re.sub(linkRegex, "\g<dom>LINK", ntext)
+        ntext = re.sub(linkRegex, "\g<dom>hyperlink", ntext)
 
         ####debugging
         #print(ntext)
@@ -212,6 +301,7 @@ class RScraper(Reddit):
         #    print(occs[0][1])
         #    print()
         ############
+
         linkdoms = [l[1] for l in links]
         fulllinks = [l[0] for l in links]
         linkdict = dict()
@@ -332,6 +422,7 @@ class RScraper(Reddit):
         self.posts.to_csv(fname, sep=";",encoding='utf-8-sig')
         self.description.to_csv(dname, sep=";",encoding='utf-8-sig')
         self.comments.to_csv(cname, sep=";",encoding='utf-8-sig')
+        print("All data has been saved.")
         return None
 
     def windower(self,text, keywords):
@@ -425,7 +516,7 @@ if __name__ == "__main__":
     print(data.head())
     print(scraper.summary())
     input("Save this collection? Else, abort.")
-    scraper.safe_all_to_csvs()
+    scraper.safe_all_to_csv()
 
     #input()
 
