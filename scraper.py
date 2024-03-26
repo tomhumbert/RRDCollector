@@ -249,7 +249,7 @@ class RScraper(Reddit):
     def get_comments(self, post_id):
         post = self.submission(post_id)
         post.comments.replace_more(limit=None)
-       	for top_level_comment in post.comments:
+        for top_level_comment in post.comments:
             text = top_level_comment.body
             author = top_level_comment.author
             cid = top_level_comment.id
