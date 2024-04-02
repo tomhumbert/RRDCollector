@@ -7,3 +7,4 @@ posts*.csv
 reddit_bot_access*
 current*
 data/*
+__pycache__/
